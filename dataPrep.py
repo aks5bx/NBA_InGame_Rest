@@ -28,23 +28,20 @@ import seaborn as sns
 sc = SparkContext.getOrCreate() ## optionally takes in a spark conf as a parameter
 spark = SparkSession(sc)
 
+#pbpDF = pd.read_csv('playByPlay_2018_19.csv')
+#playerList = pbpDF[['PLAYER1_NAME', 'PLAYER1_ID', 'GAME_ID']].drop_duplicates()
 
 
 
 
 
 
-
-#%%
-
-
-
-
-
-pbpDF = pd.read_csv('playByPlay_2018_19.csv')
-playerList = pbpDF[['PLAYER1_NAME', 'PLAYER1_ID', 'GAME_ID']].drop_duplicates()
 
 #%% 
+
+
+
+
 ## Readin play by play data
 pbpDF = spark.read.load('playByPlay_2018_19.csv',format="csv", sep=",", inferSchema="true", header="true")
 pbpDF = pbpDF.union(spark.read.load('playByPlay_2017_18.csv',format="csv", sep=",", inferSchema="true", header="true"))
@@ -144,7 +141,9 @@ def generatePlayerData(player, returnFormat, verbose):
     ## Is it a close game? 
     #playerGame = playerGame.withColumn('Close', f.when(((playerGame.SCOREMARGIN < 10) & (playerGame.SCOREMARGIN > (0-10))), 1.05).otherwise(1))
     #playerGame = playerGame.withColumn('VeryClose', f.when(((playerGame.SCOREMARGIN < 5) & (playerGame.SCOREMARGIN > (0-5))), 1.05).otherwise(1))
-    playerGame = playerGame.withColumn('ScoreMultiplier', f.when(playerGame.SCOREMARGIN.isNotNull(), (1 / playerGame.SCOREMARGIN) + 1).otherwise(1))
+    playerGame = playerGame.withColumn('SCOREMARGIN', f.when(playerGame.SCOREMARGIN == 'TIE', 0).otherwise(playerGame.SCOREMARGIN))
+    playerGame = playerGame.withColumn('SCOREMARGIN', f.last('SCOREMARGIN', True).over(Window.partitionBy('GAME_ID').orderBy('TIME').rowsBetween(-sys.maxsize, 0)))
+    playerGame = playerGame.withColumn('ScoreMultiplier', f.when(playerGame.SCOREMARGIN.isNotNull(), (10 / playerGame.SCOREMARGIN)).otherwise(1))
 
     ## Making sure that each added column doesn't have nulls
     playerGame = playerGame.withColumn('AstAdded', f.when(playerGame.AstAdded.isNull(), 0).otherwise(playerGame.AstAdded))  
@@ -166,7 +165,7 @@ def generatePlayerData(player, returnFormat, verbose):
     playerGame = playerGame.withColumn('BPMAdded', f.round((playerGame.TotalPtsAdded * 0.860) + (playerGame.ThreePMAdded * 0.389) + (playerGame.AstAdded * 0.807) +
                             (playerGame.TOAdded * -0.964) + (playerGame.ORBAdded * 0.397) + (playerGame.DRBAdded * 0.1485) + 
                             (playerGame.StealAdded * 1.1885) + (playerGame.BlockAdded * 1.01500) + (playerGame.PFAdded * -0.367) + 
-                            (playerGame.FGAAdded * -0.67) + (playerGame.FTAAdded * -0.2945), 5) * (playerGame.ScoreMultiplier))
+                            (playerGame.FGAAdded * -0.67) + (playerGame.FTAAdded * -0.2945), 5))
 
 
     #playerGameCSV = playerGame
@@ -203,9 +202,33 @@ def generatePlayerData(player, returnFormat, verbose):
 
 
 #generatePlayerData('Joel Embiid', 'spark', True)
-pdf = generatePlayerData('JR Smith', 'pandas', True)
+pdf = generatePlayerData('Jeff Teague', 'pandas', False)
+playerGame = generatePlayerData('JR Smith', 'spark', False).select('GAME_ID', 'R2PRatio', 'BPMAdded')
+
+## SPECIFIC GAME R2P RATIO
+#games = list(set(pdf['GAME_ID']))
+#pdfScore = pdf[(pdf.GAME_ID == games[21])]
+#pdfScore = pdfScore[np.abs(pdfScore.BPMAdded - pdfScore.BPMAdded.mean())<=(2*pdfScore.BPMAdded.std())]
+#sns.regplot('R2PRatio','BPMAdded', pdfScore, robust = True)
+
+## SCORE MARGIN
+#games = list(set(pdf['GAME_ID']))
+#pdfScore = pdf[(~pdf.SCOREMARGIN.isna()) & (pdf.GAME_ID == games[6])]
+#pdfScore['SCOREMARGIN'] = pdfScore['SCOREMARGIN'].astype('int')
+#sns.regplot('SCOREMARGIN','BPMAdded', pdfScore, robust = False)
 
 
+############
+### IDEA ###
+############
+
+# Understand each player's performance clusters in order to optimize lineups
+## You want a lineup where you have players who are different, unique clusters
+## Look at Jokic for good cluster example
+## Look at clusters on a game by game level
+## List out all of the clusters a player has over all of their games
+## Aggregate all of the clusters (remove outliers, keep only the core identity) 
+## to form the general performance clusters of a player
 
 
 
@@ -215,28 +238,65 @@ pdf = generatePlayerData('JR Smith', 'pandas', True)
 #plt.show()
 
 
-
-
-
 sns.lmplot('R2PRatio','BPMAdded', pdf)
 
 
 
 
 #%%
-
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.regression import LinearRegression
+from pyspark.ml.clustering import KMeans
+from pyspark.ml.evaluation import ClusteringEvaluator
 
-vectorAssembler = VectorAssembler(inputCols = ['TotalRest', 'TotalPlay'], outputCol = 'features')
-vhouse_df = vectorAssembler.transform(house_df)
-vhouse_df = vhouse_df.select(['features', 'MV'])
-vhouse_df.show(3)
+gameList = playerGame.select("GAME_ID").distinct().collect()
+
+print(playerGame.count())
+playerGameSingle = playerGame.filter(playerGame.GAME_ID == gameList[0][0])
+print(playerGameSingle.count())
+
+vectorAssembler = VectorAssembler(inputCols = ['R2PRatio', 'BPMAdded'], outputCol = 'features')
+VplayerGame = vectorAssembler.transform(playerGameSingle)
+VplayerGame = VplayerGame.select('features')
+VplayerGame.show(3)
+
+kmeans = KMeans().setK(4).setSeed(1)
+model = kmeans.fit(VplayerGame)
+
+predictions = model.transform(VplayerGame)
+
+evaluator = ClusteringEvaluator()
+
+silhouette = evaluator.evaluate(predictions)
+print("Silhouette with squared euclidean distance = " + str(silhouette))
 
 
 
 
+#splits = VplayerGame.randomSplit([0.7, 0.3])
+#train_df = splits[0]
+#test_df = splits[1]
 
+#cost = np.zeros(20)
+#for k in range(2,20):
+ #   kmeans = KMeans().setK(k).setSeed(1).setFeaturesCol("features")
+  #  model = kmeans.fit(VplayerGame.sample(False,0.1, seed=42))
+   # cost[k] = model.computeCost(VplayerGame) # requires Spark 2.0 or lat
+
+#fig, ax = plt.subplots(1,1, figsize =(8,6))
+#ax.plot(range(2,20),cost[2:20])
+#ax.set_xlabel('k')
+#ax.set_ylabel('cost')
+
+#lr = LinearRegression(featuresCol = 'features', labelCol='BPMAdded', maxIter=10, regParam=0.3, elasticNetParam=0.8)
+#lr_model = lr.fit(train_df)
+#rint("Coefficients: " + str(lr_model.coefficients))
+#print("Intercept: " + str(lr_model.intercept))
+
+#trainingSummary = lr_model.summary
+#print("RMSE: %f" % trainingSummary.rootMeanSquaredError)
+#print("r2: %f" % trainingSummary.r2)
 
 
 
