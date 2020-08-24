@@ -186,6 +186,7 @@ def generatePlayerData(player, returnFormat, verbose):
         return pdf
               
     else: 
+        playerGame = playerGame.select('GAME_ID', 'R2PRatio', 'BPMAdded', 'TIME')
         return playerGame
     
 
@@ -202,8 +203,8 @@ def generatePlayerData(player, returnFormat, verbose):
 
 
 #generatePlayerData('Joel Embiid', 'spark', True)
-pdf = generatePlayerData('Jeff Teague', 'pandas', False)
-playerGame = generatePlayerData('JR Smith', 'spark', False).select('GAME_ID', 'R2PRatio', 'BPMAdded')
+# pdf = generatePlayerData('Jeff Teague', 'pandas', False)
+playerGame = generatePlayerData('Reggie Jackson', 'spark', False)
 
 ## SPECIFIC GAME R2P RATIO
 #games = list(set(pdf['GAME_ID']))
@@ -238,7 +239,7 @@ playerGame = generatePlayerData('JR Smith', 'spark', False).select('GAME_ID', 'R
 #plt.show()
 
 
-sns.lmplot('R2PRatio','BPMAdded', pdf)
+#sns.lmplot('R2PRatio','BPMAdded', pdf)
 
 
 
@@ -250,29 +251,111 @@ from pyspark.ml.regression import LinearRegression
 from pyspark.ml.clustering import KMeans
 from pyspark.ml.evaluation import ClusteringEvaluator
 
-gameList = playerGame.select("GAME_ID").distinct().collect()
+def generatedClusters(playerGame, init, gameNumber):
 
-print(playerGame.count())
-playerGameSingle = playerGame.filter(playerGame.GAME_ID == gameList[0][0])
-print(playerGameSingle.count())
+    gameList = playerGame.select("GAME_ID").distinct().collect()
+    gameList = [game[0] for game in gameList]
 
-vectorAssembler = VectorAssembler(inputCols = ['R2PRatio', 'BPMAdded'], outputCol = 'features')
-VplayerGame = vectorAssembler.transform(playerGameSingle)
-VplayerGame = VplayerGame.select('features')
-VplayerGame.show(3)
-
-kmeans = KMeans().setK(4).setSeed(1)
-model = kmeans.fit(VplayerGame)
-
-predictions = model.transform(VplayerGame)
-
-evaluator = ClusteringEvaluator()
-
-silhouette = evaluator.evaluate(predictions)
-print("Silhouette with squared euclidean distance = " + str(silhouette))
+    if init:
+        playerGameSingle = playerGame.filter(playerGame.GAME_ID.isin(gameList[0:30]))
+    
+    else: 
+        playerGameSingle = playerGame.filter(playerGame.GAME_ID.isin(gameList[gameNumber]))
 
 
+    vectorAssembler = VectorAssembler(inputCols = ['R2PRatio', 'BPMAdded'], outputCol = 'features')
+    VplayerGame = vectorAssembler.transform(playerGameSingle)
+    VplayerGame = VplayerGame.select('features')
 
+    kmeans = KMeans().setK(3).setSeed(1)
+    model = kmeans.fit(VplayerGame)
+
+    predictions = model.transform(VplayerGame)
+
+    evaluator = ClusteringEvaluator()
+
+    silhouette = evaluator.evaluate(predictions)
+
+    rows = model.transform(VplayerGame).select('prediction').collect()
+    
+    print("Silhouette with squared euclidean distance = " + str(silhouette))
+
+    # coreCenters.append(model.clusterCenters())
+
+    #core0Count = len([1 for row in rows if row[0] == 0])
+    #ore1Count = len([1 for row in rows if row[0] == 1])
+    #core2Count = len([1 for row in rows if row[0] == 2])
+    #ore3Count = len([1 for row in rows if row[0] == 3])
+
+    #coreCenters.extend([model.clusterCenters()[0] for i in range(core0Count)])
+    #coreCenters.extend([model.clusterCenters()[1] for i in range(core1Count)])
+    #coreCenters.extend([model.clusterCenters()[2] for i in range(core2Count)])
+    #coreCenters.extend([model.clusterCenters()[3] for i in range(core3Count)])
+    
+    #if core0Count == max([core0Count, core1Count, core2Count, core3Count]):
+    #    coreCenters.append(model.clusterCenters()[0])
+    #elif core1Count == max([core0Count, core1Count, core2Count, core3Count]):
+    #    coreCenters.append(model.clusterCenters()[1])
+    #elif core2Count == max([core0Count, core1Count, core2Count, core3Count]):
+    #    coreCenters.append(model.clusterCenters()[2])
+    #elif core3Count == max([core0Count, core1Count, core2Count, core3Count]):
+    #    coreCenters.append(model.clusterCenters()[3])
+
+    return model.clusterCenters()
+
+
+def manhattanDistance(coor1, coor2):
+    x1 = coor1[0]
+    y1 = coor1[1]
+
+    x2 = coor2[0]
+    y2 = coor2[1]
+
+    dist = abs(x2 - x1) + abs(y2 - y1)
+
+    return dist
+
+def clusterDifference(anchorClusters, newClusters): 
+    anchorCluster1 = anchorClusters[0]
+    anchorCluster2 = anchorClusters[1]
+    anchorCluster3 = anchorClusters[2]
+
+    newClusters1 = newClusters[0]
+    newClusters2 = newClusters[1]
+    newClusters3 = newClusters[2]
+
+
+    distance1 =  manhattanDistance(anchorCluster1, newClusters1) + manhattanDistance(anchorCluster2, newClusters2) + manhattanDistance(anchorCluster3, newClusters3)
+
+    distance2 =  manhattanDistance(anchorCluster1, newClusters1) + manhattanDistance(anchorCluster2, newClusters3) + manhattanDistance(anchorCluster3, newClusters2)
+
+    distance3 =  manhattanDistance(anchorCluster1, newClusters2) + manhattanDistance(anchorCluster2, newClusters1) + manhattanDistance(anchorCluster3, newClusters3)
+
+    distance4 =  manhattanDistance(anchorCluster1, newClusters2) + manhattanDistance(anchorCluster2, newClusters3) + manhattanDistance(anchorCluster3, newClusters1)
+
+    distance5 =  manhattanDistance(anchorCluster1, newClusters3) + manhattanDistance(anchorCluster2, newClusters1) + manhattanDistance(anchorCluster3, newClusters2)
+
+    distance6 =  manhattanDistance(anchorCluster1, newClusters3) + manhattanDistance(anchorCluster2, newClusters2) + manhattanDistance(anchorCluster3, newClusters1)
+
+    minDist = min([distance1, distance2, distance3, distance4, distance5, distance6])
+    return minDist 
+
+
+def genPlayerVariance(player):
+    playerGame = playerGame = generatePlayerData(player, 'spark', False)
+
+
+
+
+
+
+x = []
+y = []
+for core in coreCenters: 
+    x.append(core[0])
+    y.append(core[1])
+
+plt.scatter(x, y)
 
 #splits = VplayerGame.randomSplit([0.7, 0.3])
 #train_df = splits[0]
