@@ -163,10 +163,19 @@ def generatePlayerData(player, returnFormat, verbose):
 
 
     ## Now, calculate a psuedo BPM (https://www.basketball-reference.com/about/bpm2.html#:~:text=Estimate%20a%20regressed%20minutes%20per,%2D%204.75%20%2B%200.175%20*%20ReMPG.)
-    playerGame = playerGame.withColumn('BPMAdded', f.round((playerGame.TotalPtsAdded * 0.860) + (playerGame.ThreePMAdded * 0.389) + (playerGame.AstAdded * 0.807) +
-                            (playerGame.TOAdded * -0.964) + (playerGame.ORBAdded * 0.397) + (playerGame.DRBAdded * 0.1485) + 
-                            (playerGame.StealAdded * 1.1885) + (playerGame.BlockAdded * 1.01500) + (playerGame.PFAdded * -0.367) + 
-                            (playerGame.FGAAdded * -0.67) + (playerGame.FTAAdded * -0.2945), 5))
+    
+    playerGame =            playerGame.withColumn('BPMAdded', f.round(
+                            (playerGame.TotalPtsAdded * 0.860) +                 
+                            (playerGame.ThreePMAdded * 0.389) + 
+                            (playerGame.AstAdded * 0.807) + 
+                            (playerGame.TOAdded * -0.964) + 
+                            (playerGame.ORBAdded * 0.397) + 
+                            (playerGame.DRBAdded * 0.1485) + 
+                            (playerGame.StealAdded * 1.1885) + 
+                            (playerGame.BlockAdded * 1.01500) + 
+                            (playerGame.PFAdded * -0.367) + 
+                            (playerGame.FGAAdded * -0.67) + 
+                            (playerGame.FTAAdded * -0.2945), 5))
 
 
     #playerGameCSV = playerGame
@@ -263,7 +272,7 @@ def generateClusters(playerGame, init, gameNumber):
         playerGameSingle = playerGame.filter(playerGame.GAME_ID.isin(gameList[0:30]))
     
     else: 
-        playerGameSingle = playerGame.filter(playerGame.GAME_ID.isin(gameList[gameNumber]))
+        playerGameSingle = playerGame.filter(playerGame.GAME_ID == gameList[gameNumber])
 
 
     vectorAssembler = VectorAssembler(inputCols = ['R2PRatio', 'BPMAdded'], outputCol = 'features')
@@ -320,6 +329,8 @@ def manhattanDistance(coor1, coor2):
 
     return dist
 
+  
+
 def clusterDifference(anchorClusters, newClusters): 
     anchorCluster1 = anchorClusters[0]
     anchorCluster2 = anchorClusters[1]
@@ -358,17 +369,27 @@ def genPlayerVariance(player):
         gameClusters = generateClusters(playerGame, False, gameNumber)
         totalDiff.append(clusterDifference(anchorClusters, gameClusters))
 
+    print(player, ' variance calculated to be ', statistics.mean(totalDiff))
     return statistics.mean(totalDiff)
 
 
 results = []
-playerListLoop = ['LeBron James', 'Nikola Jokic', 'Kyrie Irving', 'Kyle Lowry', 'Anthony Davis', 'Damian Lillard', 'Lou Williams', 'Chris Paul', 'John Wall', 'Bradley Beal', 'Jimmy Butler']
+#playerListLoop = ['LeBron James', 'Nikola Jokic', 'Kyrie Irving', 'Kyle Lowry', 'Anthony Davis', 'Damian Lillard', 'Lou Williams', 'Chris Paul', 'John Wall', 'Bradley Beal', 'Jimmy Butler']
+playerListLoop = ['Kyrie Irving']
 
-for player in tqdm(playerListLoop):
+for player in playerListLoop:
+    print(player)
     results.append(genPlayerVariance(player))
 
+try:
+    df = pd.DataFrame(list(zip(playerListLoop, results)), 
+               columns =['Player Name', 'Variance Metric'])
+    print(df)
+except:
+    print('unable to write results')
 
-
+print(results)
+print(playerListLoop)
 
 #x = []
 #y = []
